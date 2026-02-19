@@ -1,277 +1,164 @@
 # Face Recognition & Detection System
 
-A Python-based face recognition and detection system using OpenCV and Local Binary Patterns Histograms (LBPH) for real-time facial identification and attendance tracking.
+A Python pipeline for face detection and recognition using OpenCV. Haar Cascade for detection, LBPH for recognition.
 
-## Overview
+**Quick start:** `pip install -r requirements.txt` → `python main.py`
 
-This project implements a complete pipeline for face recognition:
-1. **Data Collection** - Capture training images from camera
-2. **Model Training** - Train LBPH recognizer on collected images
-3. **Face Recognition** - Real-time face detection and identification from video stream
-4. **Attendance Tracking** - Track recognized individuals
+**Menu:** 1) Enroll faces (collect + train) 2) Face recognition 3) Exit. Press `q` to exit camera windows.
 
-## Features
+---
 
-- Real-time face detection using Haar Cascade classifiers
-- Face recognition using LBPH (Local Binary Patterns Histograms) algorithm
-- Confidence scoring for predictions
-- Attendance tracking system
-- Easy-to-use command-line interface
+## What the Code Does
+
+### Two-Stage Pipeline
+
+1. **Detection** — Locate face regions in each frame with `cv2.CascadeClassifier` (Haar).
+2. **Recognition** — Identify each detected face with `cv2.face.LBPHFaceRecognizer`, which outputs a numeric ID and a confidence value (lower = better match).
+
+The recognizer is trained on grayscale face crops. IDs are integers; names come from `config/users.json`.
+
+---
+
+## Data Flow
+
+```
+Camera → Grayscale frame → Haar Cascade detects faces → For each face:
+  → Crop face region → LBPH predict(ID, confidence) → Map ID to name via users.json
+  → Draw box + label on frame → Display
+```
+
+---
+
+## Module Breakdown
+
+### `src/config.py`
+
+Defines paths and constants. All paths are relative to the project root.
+
+- **Paths**: `data/dataset/` (training images), `models/` (trained LBPH model), `config/users.json` (ID→name mapping), `assets/` (Haar cascade XML).
+- **Detection**: `scaleFactor=1.2`, `minNeighbors=5` for `detectMultiScale`.
+- **Recognition**: `CONFIDENCE_THRESHOLD=100` — LBPH returns lower values for better matches; values below this are treated as a valid identification.
+
+---
+
+### `src/collect.py` — Data Collection
+
+**Purpose**: Capture face crops from the camera and write them to disk.
+
+**Process**:
+1. Prompts for a numeric `face_id` and optional name.
+2. Writes `{face_id: name}` to `config/users.json`.
+3. Opens the camera with `cv2.VideoCapture`.
+4. For each frame:
+   - Converts to grayscale.
+   - Runs `face_detector.detectMultiScale(gray, scaleFactor=1.2, minNeighbors=5, minSize=(100, 100))`.
+   - For each bounding box `(x, y, w, h)`, crops `gray[y:y+h, x:x+w]` and saves as `data/dataset/User.{face_id}.{count}.jpg`.
+5. Stops after `MAX_SAMPLES` (20) images or when the user presses the exit key.
+
+**Output**: Grayscale face images named `User.{id}.{count}.jpg`. The ID in the filename is the label used during training.
+
+---
+
+### `src/train.py` — Model Training
+
+**Purpose**: Train the LBPH recognizer on images in `data/dataset/` and save the model.
+
+**Process**:
+1. Scans `data/dataset/` for `.jpg`, `.jpeg`, `.png`.
+2. Extracts the user ID from the filename (`User.{id}.{count}.jpg` → `id`).
+3. Loads each image, converts to grayscale (PIL then numpy), runs the Haar cascade to find faces, and crops each face. Each crop is paired with its ID.
+4. Builds two arrays: `face_samples` (cropped grayscale images) and `ids` (integer labels).
+5. Calls `recognizer.train(faces, np.array(ids))` where `recognizer = cv2.face.LBPHFaceRecognizer_create()`.
+6. Saves the model to `models/trainer.yml`.
+7. Updates `config/users.json`: adds any new IDs from the dataset with default name `"User {id}"`, keeps existing names.
+
+**Output**: `models/trainer.yml` (LBPH model) and an updated `config/users.json`.
+
+---
+
+### `src/recognize.py` — Recognition
+
+**Purpose**: Run live face recognition from the camera.
+
+**Process**:
+1. Loads `config/users.json` into a `users` dict.
+2. Loads the LBPH model from `models/trainer.yml`.
+3. Opens the camera and runs a loop:
+   - Reads a frame, converts to grayscale.
+   - Runs `face_cascade.detectMultiScale(gray, SCALE_FACTOR, MIN_NEIGHBORS)`.
+   - For each detected face `(x, y, w, h)`:
+     - Crops `gray[y:y+h, x:x+w]`.
+     - Calls `recognizer.predict(crop)` → `(face_id, confidence)`.
+     - If `confidence < CONFIDENCE_THRESHOLD`: maps `face_id` to name via `users`, displays `{name} {100-confidence:.2f}%`.
+     - Else: displays `"Unknown {100-confidence:.2f}%"`.
+   - Draws a green rectangle and label on the frame.
+
+
+---
+
+### `main.py`
+
+Provides a 3-option CLI menu:
+1. **Enroll faces** — runs `collect.run()` then `train.run()` (capture images, then train on the full dataset)
+2. **Face recognition** — runs `recognize.run()`
+3. **Exit**
+
+---
+
+## Algorithms
+
+### Haar Cascade (`cv2.CascadeClassifier`)
+
+Pre-trained XML classifier. `detectMultiScale` slides a window over the image at different scales and applies a cascade of simple tests to reject non-face regions quickly. Returns bounding boxes `(x, y, w, h)` for each face.
+
+### LBPH (`cv2.face.LBPHFaceRecognizer`)
+
+1. Splits each face into small cells.
+2. Computes Local Binary Pattern (LBP) for each cell — compares each pixel to its neighbors to form a binary code.
+3. Builds a histogram of LBPs per cell.
+4. Concatenates histograms into one feature vector per face.
+5. At prediction time: compares the query face’s feature vector to stored vectors, returns the closest ID and a distance (confidence). Lower distance = better match.
+
+---
 
 ## Project Structure
 
 ```
 .
-├── face_datasets.py              # Data collection script
-├── training.py                   # Model training script
-├── face_recognition.py           # Real-time recognition script
-├── haarcascade_frontalface_default.xml  # Pre-trained Haar Cascade
-├── dataSet/                      # Training image dataset
-├── trainer/                      # Trained model storage
-├── Classifiers/                  # Additional classifiers
-└── requirements.txt              # Python dependencies
+├── main.py                 # CLI entry point
+├── src/
+│   ├── config.py           # Paths, thresholds, camera index
+│   ├── collect.py          # Camera → face crops → dataset
+│   ├── train.py            # Dataset → LBPH model
+│   └── recognize.py        # Camera → detection → recognition
+├── data/dataset/           # User.{id}.{count}.jpg (grayscale face crops)
+├── models/                 # trainer.yml (serialized LBPH)
+├── config/users.json       # {"id": "name"}
+└── assets/                 # haarcascade_frontalface_default.xml
 ```
 
-## Prerequisites
+---
 
-- Python 3.6+
-- Webcam/Camera
-- macOS, Linux, or Windows
-
-### System Permissions (macOS)
-
-On macOS, you must grant camera permissions:
-1. Go to **System Preferences > Security & Privacy > Camera**
-2. Add Python/Terminal to the allowed applications
-
-## Installation
-
-### 1. Clone or Download the Project
-
-```bash
-cd "Face Recognition & Detection/Implementation"
-```
-
-### 2. Create Virtual Environment (Recommended)
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-```
-
-### 3. Install Dependencies
+## Run
 
 ```bash
 pip install -r requirements.txt
+python main.py
 ```
 
-**Required packages:**
-- opencv-contrib-python
-- numpy
-- pillow
-- pandas
+**Prerequisites:** Python 3.6+, webcam. Grant camera permissions on macOS (System Preferences → Security & Privacy → Camera).
 
-## Usage
-
-### Step 1: Collect Training Data
-
-Run the data collection script to capture facial images:
-
+Run modules directly (without the menu):
 ```bash
-python face_datasets.py
+python -m src.collect
+python -m src.train
+python -m src.recognize
 ```
 
-**Process:**
-1. Enter a unique integer ID for the person (e.g., 1, 2, 3)
-2. Look at the camera and move naturally
-3. The system will capture ~100+ images automatically and save them as:
-   - `dataSet/User.{id}.{count}.jpg`
-4. Press **'q'** to stop the session
+---
 
-**Notes:**
-- Ensure good lighting conditions
-- Capture different angles and expressions
-- Collect data for multiple individuals (at least 2-3 people)
+## Dependencies
 
-### Step 2: Train the Model
-
-After collecting sufficient data, train the recognition model:
-
-```bash
-python training.py
-```
-
-**Output:**
-- Trains on images in the `dataSet/` folder
-- Saves trained model to `trainer/trainer.yml`
-- Displays number of samples and individuals processed
-
-### Step 3: Run Face Recognition
-
-Launch the real-time face recognition system:
-
-```bash
-python face_recognition.py
-```
-
-**Features:**
-- Real-time video feed with face detection
-- Green rectangles around detected faces
-- Displays recognized person's name and confidence score
-- Tracks attendance for each recognized individual
-- Press **'q'** to exit
-
-## File Descriptions
-
-### `face_datasets.py`
-Captures training images from the camera and stores them in the dataset folder.
-- Opens camera (device 0)
-- Detects faces using Haar Cascade
-- Saves cropped face images with format: `User.{id}.{count}.jpg`
-
-### `training.py`
-Trains the LBPH face recognizer using collected images.
-- Loads images from `dataSet/` folder
-- Extracts faces from training images
-- Creates and trains LBPH model
-- Saves model to `trainer/trainer.yml`
-
-### `face_recognition.py`
-Real-time face recognition and identification system.
-- Loads trained model from `trainer/trainer.yml`
-- Captures live video from camera
-- Detects and identifies faces
-- Displays confidence scores (lower is better, <100 is positive match)
-- Maintains attendance array for tracked individuals
-
-### `haarcascade_frontalface_default.xml`
-Pre-trained Haar Cascade classifier for frontal face detection provided by OpenCV.
-
-## Configuration
-
-### Image Naming Convention
-Images must follow this naming pattern: `User.{id}.{count}.jpg`
-- `{id}` = unique person identifier (integer)
-- `{count}` = image number (incremented for each capture)
-- Example: `User.1.1.jpg`, `User.1.2.jpg`, `User.2.1.jpg`
-
-### Recognition Parameters
-
-In `face_recognition.py`, you can adjust:
-- **Confidence threshold** (line ~50): `if confidence<100:`
-  - Lower values = stricter matching
-  - Higher values = more lenient
-- **Face detection scale** (line ~37): `scaleFactor=1.2`
-  - Adjust sensitivity of face detection
-
-### User IDs
-
-The system currently recognizes:
-- ID 35 → "Utkarsh"
-- ID 2 → "Mohit"
-- ID 39 → "Rony"
-- ID 4 → "MANAN"
-
-To add more users, modify the ID mapping in `face_recognition.py` (around line 55-66).
-
-## Troubleshooting
-
-### Camera Not Opening
-
-**Problem:** "Could not open camera"
-
-**Solutions:**
-1. Ensure camera permissions are granted (especially on macOS)
-2. Check if another application is using the camera
-3. Try a different camera device by changing `cv2.VideoCapture(0)` to `cv2.VideoCapture(1)`
-4. Reconnect your camera
-
-### Training Fails / No Faces Found
-
-**Problem:** "No faces detected in images"
-
-**Solutions:**
-1. Ensure images are in `dataSet/` folder (note: capital S)
-2. Check image quality and lighting
-3. Ensure faces are clearly visible and at least 100x100 pixels
-4. Re-capture training data with better lighting and angles
-
-### Recognition Not Working
-
-**Problem:** Faces not recognized or all marked as "Unknown"
-
-**Solutions:**
-1. Verify `trainer/trainer.yml` exists
-2. Ensure model was trained on sufficient data (>50 images per person)
-3. Lower the confidence threshold in `face_recognition.py`
-4. Re-train the model with more varied images
-5. Check that person IDs in `face_recognition.py` match your training data IDs
-
-### Quit Key Not Working
-
-**Problem:** Can't exit by pressing 'q'
-
-**Solutions:**
-1. Click on the video window to ensure it has focus
-2. Try pressing 'q' multiple times
-3. Press `Ctrl+C` in the terminal to force exit
-
-## Algorithm Details
-
-### Haar Cascade Classifier
-- Uses cascade of trained classifiers
-- Efficient, real-time face detection
-- Pre-trained on frontal faces
-
-### LBPH (Local Binary Patterns Histograms)
-- Robust face recognition algorithm
-- Creates histograms of local binary patterns
-- Good performance with minimal training data
-- Built into `cv2.face.LBPHFaceRecognizer`
-
-## Performance Tips
-
-1. **Lighting:** Use consistent, good lighting when capturing training images
-2. **Variety:** Capture faces from different angles and distances
-3. **Quantity:** More training images = better accuracy
-4. **Cleanliness:** Keep camera lens clean
-5. **Distance:** Keep faces 1-3 feet from camera
-
-## Limitations
-
-- Works best with frontal faces
-- Requires good lighting conditions
-- Limited to individuals trained in the model
-- Does not handle occlusions (glasses, masks) well
-- Single-threaded (may lag with many faces)
-
-## Future Improvements
-
-- Support for side-profile and rotated faces
-- Deep learning models (CNN-based recognition)
-- Multi-threading for better performance
-- Web interface for easier management
-- Database for storing attendance records
-- Support for face masks and accessories
-
-## License
-
-This project uses OpenCV which is released under the BSD license.
-
-## References
-
-- [OpenCV Documentation](https://docs.opencv.org/)
-- [Face Recognition with OpenCV](https://docs.opencv.org/4.5.2/dd/d65/classcv_1_1face_1_1LBPHFaceRecognizer.html)
-- [Haar Cascade Classifiers](https://docs.opencv.org/4.5.2/db/d28/tutorial_cascade_classifier.html)
-
-## Author
-
-Utkarsh Narain - Face Recognition & Detection Project
-
-## Support
-
-For issues or questions, ensure:
-1. All dependencies are installed: `pip install -r requirements.txt`
-2. Camera permissions are granted
-3. Follow the usage steps in order (collect → train → recognize)
-4. Check the troubleshooting section above
+- **opencv-contrib-python** — Haar cascade, LBPH, video capture
+- **numpy** — Array operations
+- **pillow** — Image loading in `train.py`
