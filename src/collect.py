@@ -1,5 +1,6 @@
 """Data collection: capture training images from camera for face recognition."""
 import cv2
+import glob
 import json
 import os
 
@@ -46,6 +47,15 @@ def run():
 
     count = 0
     _assure_path_exists(DATASET_DIR)
+
+    # If overwriting this ID, remove all existing training photos for it
+    existing = []
+    for ext in ("jpg", "jpeg", "png"):
+        existing.extend(glob.glob(os.path.join(DATASET_DIR, f"User.{face_id}.*.{ext}")))
+    if existing:
+        for path in existing:
+            os.remove(path)
+        print(f"Removed {len(existing)} existing image(s) for ID {face_id}.")
 
     print(f"\nCapturing images... Press '{chr(EXIT_KEY)}' to stop early, or wait for {MAX_SAMPLES} samples.\n")
 

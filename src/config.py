@@ -20,8 +20,8 @@ USERS_FILE = os.path.join(CONFIG_DIR, "users.json")
 ASSETS_DIR = os.path.join(PROJECT_ROOT, "assets")
 CASCADE_PATH = os.path.join(ASSETS_DIR, "haarcascade_frontalface_default.xml")
 
-# Recognition parameters
-CONFIDENCE_THRESHOLD = 100
+# Recognition parameters (LBPH returns distance; lower = better. We only match when (100 - distance) >= 50%.)
+CONFIDENCE_THRESHOLD = 50
 SCALE_FACTOR = 1.2
 MIN_NEIGHBORS = 5
 
